@@ -1,5 +1,6 @@
 import re
 import io
+import json
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 from collections import defaultdict
@@ -697,6 +698,29 @@ for spec in AP_METRICS:
 
 
 # ============================================================
+# PERSISTENCE HELPERS
+# ============================================================
+
+def get_save_state() -> dict:
+    """Serialize current session state to a JSON-safe dict."""
+    return {
+        "demographics": st.session_state.demographics,
+        "kpi_inputs": st.session_state.kpi_inputs,
+        "metric_comments": st.session_state.metric_comments,
+    }
+
+
+def load_save_state(data: dict):
+    """Load a previously saved state dict back into session state."""
+    if "demographics" in data:
+        st.session_state.demographics.update(data["demographics"])
+    if "kpi_inputs" in data:
+        st.session_state.kpi_inputs.update(data["kpi_inputs"])
+    if "metric_comments" in data:
+        st.session_state.metric_comments.update(data["metric_comments"])
+
+
+# ============================================================
 # SESSION STATE
 # ============================================================
 
@@ -716,12 +740,55 @@ if "kpi_inputs" not in st.session_state:
 if "metric_comments" not in st.session_state:
     st.session_state.metric_comments = {}
 
+if "session_loaded" not in st.session_state:
+    st.session_state.session_loaded = False
+
 
 # ============================================================
-# SIDEBAR
+# SIDEBAR — Save / Load Session
 # ============================================================
 
 menu = st.sidebar.radio("Menu", ["Demographics", "KPI Components & Value"])
+
+st.sidebar.divider()
+st.sidebar.markdown("### 💾 Save / Restore Session")
+st.sidebar.caption(
+    "Download your progress as a JSON file before closing or refreshing. "
+    "Re-upload it next time to restore exactly where you left off."
+)
+
+# --- Save button ---
+save_json = json.dumps(get_save_state(), indent=2)
+st.sidebar.download_button(
+    label="⬇️ Save Progress (JSON)",
+    data=save_json,
+    file_name="ap_metrics_session.json",
+    mime="application/json",
+    use_container_width=True,
+    key="save_session_btn",
+)
+
+# --- Load button ---
+uploaded_session = st.sidebar.file_uploader(
+    "⬆️ Restore Progress",
+    type=["json"],
+    key="restore_session_uploader",
+    help="Upload a previously saved ap_metrics_session.json file.",
+)
+
+if uploaded_session is not None and not st.session_state.session_loaded:
+    try:
+        data = json.load(uploaded_session)
+        load_save_state(data)
+        st.session_state.session_loaded = True
+        st.sidebar.success("✅ Session restored successfully!")
+        st.rerun()
+    except Exception as e:
+        st.sidebar.error(f"Failed to restore session: {e}")
+
+# Reset the loaded flag when uploader is cleared
+if uploaded_session is None:
+    st.session_state.session_loaded = False
 
 
 # ============================================================
