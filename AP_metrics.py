@@ -10,6 +10,7 @@ import streamlit as st
 st.set_page_config(page_title="AP Metrics App", layout="wide")
 st.title("NWC — AP Metrics (Auto-calc)")
 
+
 # ============================================================
 # Metric Model
 # ============================================================
@@ -25,8 +26,8 @@ class MetricSpec:
     numerators: Optional[List[str]] = None
     multi_denominator: Optional[str] = None
     notes: Optional[str] = None
-    metric_name: Optional[str] = None   # clean display name
-    region: Optional[str] = None        # extracted region
+    metric_name: Optional[str] = None
+    region: Optional[str] = None
 
 
 # ============================================================
@@ -631,7 +632,7 @@ def safe_float(x: Any):
         if s == "":
             return None
         return float(s)
-    except:
+    except Exception:
         return None
 
 
@@ -712,6 +713,9 @@ if "demographics" not in st.session_state:
 if "kpi_inputs" not in st.session_state:
     st.session_state.kpi_inputs = {}
 
+if "metric_comments" not in st.session_state:
+    st.session_state.metric_comments = {}
+
 
 # ============================================================
 # SIDEBAR
@@ -781,15 +785,14 @@ if menu == "Demographics":
 # ============================================================
 
 else:
-
     export_rows = []
+    component_export_rows = []
 
     metrics_by_lever = defaultdict(list)
     for spec in AP_METRICS:
         metrics_by_lever[spec.lever].append(spec)
 
     for lever, specs in metrics_by_lever.items():
-
         st.markdown(f"## {lever}")
 
         for spec in specs:
@@ -820,6 +823,16 @@ else:
                     )
                     inputs[comp] = st.session_state.kpi_inputs[kpi_key][comp]
 
+                if kpi_key not in st.session_state.metric_comments:
+                    st.session_state.metric_comments[kpi_key] = ""
+
+                st.session_state.metric_comments[kpi_key] = st.text_area(
+                    "Comment",
+                    value=st.session_state.metric_comments[kpi_key],
+                    key=f"comment::{kpi_key}",
+                    placeholder="Describe how you extracted the metric components..."
+                )
+
                 outputs = calc_metric(spec, inputs)
 
                 if len(outputs) == 1:
@@ -846,6 +859,14 @@ else:
                     else:
                         unit = "Abs."
 
+                    region_value = KPI_NAMING_MAP.get(
+                        f"{spec.kpi} — {out_label}",
+                        KPI_NAMING_MAP.get(spec.kpi, {"region": spec.region})
+                    )["region"]
+
+                    metric_name = output_metric_name(spec, out_label)
+                    comment_value = st.session_state.metric_comments.get(kpi_key, "")
+
                     export_rows.append({
                         "Function": "AP",
                         "Lever": spec.lever,
@@ -853,32 +874,80 @@ else:
                         "Industry": st.session_state.demographics.get("Industry", ""),
                         "Industry L2": st.session_state.demographics.get("Industry L2", ""),
                         "Primary Region": st.session_state.demographics.get("Primary Region", ""),
-                        "Region": KPI_NAMING_MAP.get(f"{spec.kpi} — {out_label}", KPI_NAMING_MAP.get(spec.kpi, {"region": spec.region}))["region"],
-                        "KPI": output_metric_name(spec, out_label),
+                        "Currency": st.session_state.demographics.get("Currency", ""),
+                        "FY / Period": st.session_state.demographics.get("FY / Period", ""),
+                        "Region": region_value,
+                        "KPI": metric_name,
                         "Value": "" if v is None else v,
                         "Unit": unit,
+                        "Comment": comment_value,
                     })
+
+                    for comp in spec.components:
+                        component_export_rows.append({
+                            "Function": "AP",
+                            "Lever": spec.lever,
+                            "Company": st.session_state.demographics.get("Company", ""),
+                            "Industry": st.session_state.demographics.get("Industry", ""),
+                            "Industry L2": st.session_state.demographics.get("Industry L2", ""),
+                            "Primary Region": st.session_state.demographics.get("Primary Region", ""),
+                            "Currency": st.session_state.demographics.get("Currency", ""),
+                            "FY / Period": st.session_state.demographics.get("FY / Period", ""),
+                            "Region": region_value,
+                            "KPI": metric_name,
+                            "Component": comp,
+                            "Component Value": inputs.get(comp, ""),
+                            "Calculated Value": "" if v is None else v,
+                            "Unit": unit,
+                            "Comment": comment_value,
+                        })
 
     st.markdown("---")
     st.subheader("Export")
 
     export_df = pd.DataFrame(export_rows, columns=[
         "Function", "Lever", "Company", "Industry", "Industry L2",
-        "Primary Region", "Region", "KPI", "Value", "Unit"
+        "Primary Region", "Currency", "FY / Period", "Region",
+        "KPI", "Value", "Unit", "Comment"
     ])
 
+    component_export_df = pd.DataFrame(component_export_rows, columns=[
+        "Function", "Lever", "Company", "Industry", "Industry L2",
+        "Primary Region", "Currency", "FY / Period", "Region",
+        "KPI", "Component", "Component Value", "Calculated Value",
+        "Unit", "Comment"
+    ])
+
+    st.markdown("### KPI-Level Export Preview")
     st.dataframe(export_df, use_container_width=True, hide_index=True)
 
-    towrite = io.BytesIO()
-    with pd.ExcelWriter(towrite, engine="xlsxwriter") as writer:
+    kpi_excel = io.BytesIO()
+    with pd.ExcelWriter(kpi_excel, engine="xlsxwriter") as writer:
         export_df.to_excel(writer, index=False, sheet_name="AP KPIs")
-    towrite.seek(0)
+    kpi_excel.seek(0)
 
     st.download_button(
-        "Download Excel",
-        data=towrite.getvalue(),
+        "Download KPI Excel",
+        data=kpi_excel.getvalue(),
         file_name="ap_kpis_export.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True,
         key="download_ap_excel"
+    )
+
+    st.markdown("### Component-Level Export Preview")
+    st.dataframe(component_export_df, use_container_width=True, hide_index=True)
+
+    component_excel = io.BytesIO()
+    with pd.ExcelWriter(component_excel, engine="xlsxwriter") as writer:
+        component_export_df.to_excel(writer, index=False, sheet_name="AP KPI Components")
+    component_excel.seek(0)
+
+    st.download_button(
+        "Download Component Excel",
+        data=component_excel.getvalue(),
+        file_name="ap_kpi_components_export.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+        key="download_ap_component_excel"
     )
